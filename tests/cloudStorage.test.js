@@ -254,3 +254,58 @@ test('conflict markers can retain more than 98 heads without weakening the uploa
 	);
 	assert.equal(h.writes.length, 1);
 });
+
+test('legacy account payloads normalize to v3 with empty tasks without migration writes', async () => {
+	const key = '@money-tracker/account/google%2Faccount%3Aa';
+	for (const version of [1, 2]) {
+		const h = harness();
+		const data = { ...model.emptyData(), version };
+		delete data.todos;
+		if (version === 1) delete data.habits;
+		const raw = JSON.stringify({ ...record(), data });
+		h.values.set(key, raw);
+		const loaded = await h.api.loadAccountData(profile.id);
+		assert.equal(loaded.version, 1);
+		assert.deepEqual(plain(loaded.data), model.emptyData());
+		assert.equal(loaded.data.version, 3);
+		assert.equal(h.values.get(key), raw);
+		assert.equal(h.writes.length, 0);
+		await h.api.saveAccountData(profile.id, loaded);
+		assert.equal(h.writes.length, 1);
+		assert.deepEqual(JSON.parse(h.values.get(key)), record());
+	}
+});
+
+test('complete task settings and completion history round-trip in one unchanged account envelope version', async () => {
+	const h = harness();
+	const value = record();
+	value.data.todos.items.push({
+		id: 'task',
+		title: 'Task',
+		date: '9999-12-31',
+		completedAt: '2026-11-18T10:20:30.456Z',
+	});
+	await h.api.saveAccountData(profile.id, value);
+	assert.equal(h.writes.length, 1);
+	const stored = JSON.parse(h.writes[0][1]);
+	assert.equal(stored.version, 1);
+	assert.equal(stored.data.version, 3);
+	assert.deepEqual(stored, value);
+	assert.deepEqual(plain(await h.api.loadAccountData(profile.id)), value);
+	for (const data of [
+		{ ...value.data, todos: null },
+		{
+			...value.data,
+			todos: {
+				version: 1,
+				items: [{ ...value.data.todos.items[0], completedAt: 'invalid' }],
+			},
+		},
+		{ ...value.data, version: 2 },
+	]) {
+		await assert.rejects(h.api.saveAccountData(profile.id, { ...record(), data }));
+		h.values.set(h.writes[0][0], JSON.stringify({ ...record(), data }));
+		await assert.rejects(h.api.loadAccountData(profile.id));
+	}
+	assert.equal(h.writes.length, 1);
+});

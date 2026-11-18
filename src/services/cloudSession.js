@@ -1,6 +1,7 @@
 const finance = require('../utils/finance');
 const habits = require('../utils/habits');
-const { validateAppData, changeFinance, changeHabits } = require('../utils/appData');
+const todos = require('../utils/todos');
+const { validateAppData, changeFinance, changeHabits, changeTodos } = require('../utils/appData');
 const model = require('./cloudModel');
 
 function createMoneySession({ storage, auth, drive, createRevision, now = () => new Date() }) {
@@ -19,6 +20,7 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 		conflict: null,
 		canImportGuest: false,
 		canImportHabits: false,
+		canImportTodos: false,
 	};
 	let current = null;
 	let loaded = false;
@@ -50,6 +52,7 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 			conflict: record.conflict,
 			canImportGuest: false,
 			canImportHabits: false,
+			canImportTodos: false,
 			...extra,
 		});
 	}
@@ -92,7 +95,11 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 		conflict: null,
 	});
 	async function guestImports(record, graph) {
-		const unavailable = { canImportGuest: false, canImportHabits: false };
+		const unavailable = {
+			canImportGuest: false,
+			canImportHabits: false,
+			canImportTodos: false,
+		};
 		if (record.conflict) return unavailable;
 		let guest;
 		try {
@@ -102,13 +109,18 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 			return unavailable;
 		}
 		const hasHabits = guest.habits.habits.length > 0;
+		const hasTodos = guest.todos.items.length > 0;
 		return {
 			canImportGuest:
 				!graph.heads.length &&
 				!record.dirty &&
 				record.localRevision === null &&
-				(guest.wallet.sources.length > 0 || guest.trackers.items.length > 0 || hasHabits),
+				(guest.wallet.sources.length > 0 ||
+					guest.trackers.items.length > 0 ||
+					hasHabits ||
+					hasTodos),
 			canImportHabits: !record.data.habits.habits.length && hasHabits,
+			canImportTodos: !record.data.todos.items.length && hasTodos,
 		};
 	}
 	const conflict = (
@@ -123,7 +135,12 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 	}
 	async function rememberConflict(record, marker) {
 		// Keep edits blocked even if the cache write fails; data changes only after persistence.
-		emit({ conflict: marker, canImportGuest: false, canImportHabits: false });
+		emit({
+			conflict: marker,
+			canImportGuest: false,
+			canImportHabits: false,
+			canImportTodos: false,
+		});
 		await persist({ ...record, conflict: marker, lastSyncedAt: current.lastSyncedAt });
 		return false;
 	}
@@ -269,6 +286,7 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 					conflict: null,
 					canImportGuest: false,
 					canImportHabits: false,
+					canImportTodos: false,
 					syncError: null,
 				});
 			}
@@ -339,7 +357,12 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 			const imports = graph ? await guestImports(record, graph) : {};
 			if (result?.conflict) record = { ...record, lastSyncedAt: raw?.lastSyncedAt ?? null };
 			if (record.conflict && state.account?.id === profile.id)
-				emit({ conflict: record.conflict, canImportGuest: false });
+				emit({
+					conflict: record.conflict,
+					canImportGuest: false,
+					canImportHabits: false,
+					canImportTodos: false,
+				});
 			// The target envelope must be durable before the active marker or memory changes.
 			record = model.record(record, profile.id);
 			await storage.saveAccountData(profile.id, record);
@@ -373,6 +396,7 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 				conflict: null,
 				canImportGuest: false,
 				canImportHabits: false,
+				canImportTodos: false,
 				loadError: null,
 				loading: false,
 				syncError: null,
@@ -468,6 +492,14 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 			return { ...data, habits: guest.habits };
 		});
 	}
+	async function importGuestTodos() {
+		if (!current || !state.canImportTodos) return false;
+		return commit(async (data) => {
+			if (data.todos.items.length) throw new Error('This account already has to-dos.');
+			const guest = validateAppData(await storage.loadAppData());
+			return { ...data, todos: guest.todos };
+		});
+	}
 	async function resolveConflict(choice, revision) {
 		if (!loaded || !current || !state.conflict || !acquire({ syncing: true, syncError: null }))
 			return false;
@@ -534,6 +566,10 @@ function createMoneySession({ storage, auth, drive, createRevision, now = () => 
 		removeHabit: (id) => commit(changeHabits, habits.deleteHabit, id),
 		toggleDate: (id, date, now) => commit(changeHabits, habits.toggleHabitDate, id, date, now),
 		importGuestHabits,
+		saveTodo: (todo) => commit(changeTodos, todos.upsertTodo, todo),
+		deleteTodo: (id) => commit(changeTodos, todos.deleteTodo, id),
+		toggleTodo: (id, now) => commit(changeTodos, todos.toggleTodo, id, now),
+		importGuestTodos,
 	};
 }
 

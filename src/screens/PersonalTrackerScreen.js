@@ -5,17 +5,18 @@ import { useMoneyData } from '../hooks/useMoneyData';
 import { useHabits } from '../hooks/useHabits';
 import { BalanceScreen } from './BalanceScreen';
 import { HabitScreen } from './HabitScreen';
+import { TodoScreen } from './TodoScreen';
 import { AccountScreen } from './AccountScreen';
 import { colors } from '../theme';
 
 export function PersonalTrackerScreen() {
 	const [page, setPage] = useState(null);
 	const [syncPaused, setSyncPaused] = useState(false);
-	// One session owns both domains, account isolation, and the shared save/sync lock.
+	// One session owns all sections, account isolation, and the shared save/sync lock.
 	const money = useMoneyData({ pauseSync: syncPaused });
 	const habits = useHabits(money);
 
-	if (page === 'account' || (page === 'habits' && money.conflict)) {
+	if (page === 'account' || (['habits', 'todos'].includes(page) && money.conflict)) {
 		return (
 			<AccountScreen
 				session={money}
@@ -38,6 +39,17 @@ export function PersonalTrackerScreen() {
 		return (
 			<HabitScreen
 				habits={habits}
+				onEditingChange={setSyncPaused}
+				onAccount={() => setPage('account')}
+				onBack={() => setPage(null)}
+			/>
+		);
+	}
+
+	if (page === 'todos') {
+		return (
+			<TodoScreen
+				session={money}
 				onEditingChange={setSyncPaused}
 				onAccount={() => setPage('account')}
 				onBack={() => setPage(null)}
@@ -91,6 +103,21 @@ export function PersonalTrackerScreen() {
 				</Pressable>
 				<Pressable
 					accessibilityRole="button"
+					accessibilityLabel="Open To-Do List"
+					onPress={() => setPage('todos')}
+					style={({ pressed }) => [styles.card, styles.todos, pressed && styles.pressed]}
+				>
+					<View style={styles.cardTop}>
+						<Text style={styles.todoLabel}>03 / TO-DOS</Text>
+						<Text style={styles.habitArrow}>{'>'}</Text>
+					</View>
+					<Text style={styles.habitTitle}>To-Do List</Text>
+					<Text style={styles.todoBody}>
+						Give each task a day.{'\n'}A little less to keep in your head.
+					</Text>
+				</Pressable>
+				<Pressable
+					accessibilityRole="button"
 					accessibilityLabel="Open Google Drive account"
 					onPress={() => setPage('account')}
 				>
@@ -123,6 +150,7 @@ const styles = StyleSheet.create({
 	card: { borderRadius: 28, padding: 26, marginBottom: 18 },
 	money: { backgroundColor: colors.green },
 	habits: { backgroundColor: '#F7DDA6', borderColor: '#E5C48B', borderWidth: 1 },
+	todos: { backgroundColor: '#DBE7EE', borderColor: '#BED0DC', borderWidth: 1 },
 	cardTop: {
 		flexDirection: 'row',
 		alignItems: 'center',
@@ -131,12 +159,14 @@ const styles = StyleSheet.create({
 	},
 	moneyLabel: { color: colors.lime, letterSpacing: 1.5, fontSize: 11, fontWeight: '700' },
 	habitLabel: { color: '#705025', letterSpacing: 1.5, fontSize: 11, fontWeight: '700' },
+	todoLabel: { color: '#47657B', letterSpacing: 1.5, fontSize: 11, fontWeight: '700' },
 	moneyArrow: { color: colors.lime, fontSize: 24 },
 	habitArrow: { color: colors.green, fontSize: 24 },
 	moneyTitle: { color: colors.paper, fontSize: 30, fontWeight: '600', marginBottom: 12 },
 	habitTitle: { color: colors.ink, fontSize: 30, fontWeight: '600', marginBottom: 12 },
 	moneyBody: { color: '#DBE6D7', fontSize: 14, lineHeight: 22 },
 	habitBody: { color: '#705025', fontSize: 14, lineHeight: 22 },
+	todoBody: { color: '#47657B', fontSize: 14, lineHeight: 22 },
 	footer: { color: colors.muted, textAlign: 'center', fontSize: 12, marginTop: 14 },
 	pressed: { opacity: 0.85 },
 });

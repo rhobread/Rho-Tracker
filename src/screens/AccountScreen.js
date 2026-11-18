@@ -24,6 +24,7 @@ export function AccountScreen({ session, onBack, onHome }) {
 		conflict,
 		canImportGuest,
 		canImportHabits,
+		canImportTodos,
 		googleAvailability,
 		loadError,
 	} = session;
@@ -104,7 +105,7 @@ export function AccountScreen({ session, onBack, onHome }) {
 				</Pressable>
 				<Text style={styles.title}>Google Drive</Text>
 				<Text style={styles.body}>
-					Account snapshots include Money and Habits, including check-in history.
+					Account snapshots include Money, Habits, and To-Dos, including check-in history.
 				</Text>
 				<View style={styles.card}>
 					<Text style={styles.heading}>
@@ -176,7 +177,7 @@ export function AccountScreen({ session, onBack, onHome }) {
 								<Text style={styles.heading}>Use your existing device data?</Text>
 								<Text style={styles.body}>
 									This account has no Drive data yet. You can copy your
-									device-only balances, income, payments, and habits to{' '}
+									device-only balances, income, payments, habits, and to-dos to{' '}
 									{account.email}. The device-only copy stays unchanged.
 								</Text>
 								<Pressable
@@ -185,7 +186,7 @@ export function AccountScreen({ session, onBack, onHome }) {
 									onPress={() =>
 										confirm(
 											'Copy data to this account?',
-											`Copy this phone's device-only Money and Habits to ${account.email}?`,
+											`Copy this phone's device-only Money, Habits, and To-Dos to ${account.email}?`,
 											session.importGuest,
 											'Copy data',
 										)
@@ -221,6 +222,30 @@ export function AccountScreen({ session, onBack, onHome }) {
 								</Pressable>
 							</View>
 						)}
+						{canImportTodos && !canImportGuest && (
+							<View style={styles.card}>
+								<Text style={styles.heading}>Bring your device tasks</Text>
+								<Text style={styles.body}>
+									This account has no to-dos yet. Copy this device's tasks without
+									changing its Money or Habits. The device copy is kept.
+								</Text>
+								<Pressable
+									accessibilityRole="button"
+									disabled={saving}
+									onPress={() =>
+										confirm(
+											'Copy device tasks?',
+											`Copy device-only tasks to ${account.email}? Account balances, payments, and habits will not change.`,
+											session.importGuestTodos,
+											'Copy tasks',
+										)
+									}
+									style={styles.button}
+								>
+									<Text style={styles.buttonText}>Copy device-only tasks</Text>
+								</Pressable>
+							</View>
+						)}
 					</>
 				)}
 				{conflict && (
@@ -228,9 +253,9 @@ export function AccountScreen({ session, onBack, onHome }) {
 						<Text style={styles.heading}>Different saved versions</Text>
 						<Text style={styles.body}>
 							Another device changed the data too. Nothing is merged automatically, so
-							paid entries cannot be counted twice. The choice replaces both Money and
-							Habits, including check-ins. Choose one complete version, or sign out to
-							continue with device-only data.
+							paid entries cannot be counted twice. The choice replaces Money, Habits,
+							and To-Dos, including check-ins. Choose one complete version, or sign
+							out to continue with device-only data.
 						</Text>
 						<Text style={styles.body}>{conflict.message}</Text>
 						<Pressable

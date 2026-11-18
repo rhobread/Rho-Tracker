@@ -626,7 +626,7 @@ test('stale callbacks always act on latest committed ref across all action types
 	assert.deepEqual(plain(hook.render().data.habits), committedHabits);
 	assert.equal(writes.length, 10);
 	for (const data of writes.slice(3)) {
-		assert.equal(data.version, 2);
+		assert.equal(data.version, 3);
 		assert.deepEqual(plain(data.habits), committedHabits);
 	}
 	assert.equal(await stale.removeHabit(habit.id), true);
@@ -725,7 +725,7 @@ test('hook migrates real legacy finance and habits together without modifying ei
 	assert.equal(storage.writes.length, 3);
 	assert.ok(storage.writes.every(([key]) => key === APP_DATA));
 	const stored = JSON.parse(storage.values.get(APP_DATA));
-	assert.equal(stored.version, 2);
+	assert.equal(stored.version, 3);
 	assert.equal(stored.wallet.sources[0].amountMinor, 500);
 	assert.equal(stored.trackers.items[0].entries[key].applied.amountMinor, -500);
 	assert.equal(stored.habits.habits[0].completions[key], completionTime.toISOString());
@@ -763,7 +763,7 @@ test('real app storage and hook keep wallet/history atomic on failed save, retry
 	assert.equal(storage.writes.length, 1);
 	assert.equal(storage.writes[0][0], APP_DATA);
 	const stored = JSON.parse(storage.values.get(APP_DATA));
-	assert.equal(stored.version, 2);
+	assert.equal(stored.version, 3);
 	assert.deepEqual(stored.habits, data.habits);
 	assert.equal(stored.wallet.sources[0].amountMinor, 500);
 	assert.equal(stored.trackers.items[0].entries[key].applied.amountMinor, -500);

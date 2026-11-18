@@ -111,6 +111,7 @@ test('read validates expected account, metadata/body revision, parents, money an
 		{ ...body(), version: 2 },
 		{ ...body(), data: {} },
 		{ ...body(), data: { ...model.emptyData(), habits: null } },
+		{ ...body(), data: { ...model.emptyData(), todos: null } },
 		{ ...body(), updatedAt: 'not-a-date' },
 	]) {
 		const drive = adapter(async () => ok(value));
@@ -211,6 +212,18 @@ test('invalid upload snapshots reject before HTTP; metadata supports at most 98 
 		drive.writeSnapshot('A', 'token', {
 			...body(),
 			data: { ...model.emptyData(), habits: null },
+		}),
+	);
+	await assert.rejects(
+		drive.writeSnapshot('A', 'token', {
+			...body(),
+			data: { ...model.emptyData(), todos: null },
+		}),
+	);
+	await assert.rejects(
+		drive.writeSnapshot('A', 'token', {
+			...body(),
+			data: { ...model.emptyData(), version: 2 },
 		}),
 	);
 	await assert.rejects(
@@ -434,7 +447,7 @@ test('late invisible POST and retry after restart produce equivalent immutable c
 	assert.match(historicalRestore.getState().syncError, /invalid or inconsistent/);
 });
 
-test('multipart upload and media restore round-trip the entire v2 habit payload inside a v1 snapshot', async () => {
+test('multipart upload and media restore round-trip the entire v3 payload inside a v1 snapshot', async () => {
 	const value = {
 		...body(),
 		data: validateAppData({
@@ -464,6 +477,13 @@ test('multipart upload and media restore round-trip the entire v2 habit payload 
 					},
 				],
 			},
+			todos: {
+				version: 1,
+				items: [
+					{ id: 'task', title: 'Buy groceries', date: '9999-12-31', completedAt: DATE },
+					{ id: 'past', title: 'Review notes', date: '1900-01-01', completedAt: null },
+				],
+			},
 		}),
 	};
 	let uploaded;
@@ -478,7 +498,7 @@ test('multipart upload and media restore round-trip the entire v2 habit payload 
 	const node = await drive.writeSnapshot('A', 'token', value);
 	assert.deepEqual(uploaded, value);
 	assert.equal(uploaded.version, 1);
-	assert.equal(uploaded.data.version, 2);
+	assert.equal(uploaded.data.version, 3);
 	assert.deepEqual(plain(await drive.readSnapshot('A', 'token', node)), value);
 });
 
@@ -511,4 +531,25 @@ test('duplicate snapshots with identical money but different habit history are r
 	});
 	const { heads } = await drive.listHeads('A', 'token');
 	await assert.rejects(drive.readSnapshot('A', 'token', heads[0]), /contents disagree/);
+});
+
+test('duplicate snapshots cannot disagree only on task settings, dates or completion history', async () => {
+	for (const patch of [{ title: 'Changed' }, { date: '2026-11-19' }, { completedAt: null }]) {
+		const value = body();
+		value.data.todos.items.push({
+			id: 'task',
+			title: 'Task',
+			date: '2026-11-18',
+			completedAt: DATE,
+		});
+		const drive = adapter(async (url) => {
+			if (!url.includes('alt=media'))
+				return ok({ files: [file('r1', [], 'one'), file('r1', [], 'two')] });
+			const copy = plain(value);
+			if (url.includes('/two?')) Object.assign(copy.data.todos.items[0], patch);
+			return ok(copy);
+		});
+		const { heads } = await drive.listHeads('A', 'token');
+		await assert.rejects(drive.readSnapshot('A', 'token', heads[0]), /contents disagree/);
+	}
 });

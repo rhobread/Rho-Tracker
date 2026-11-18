@@ -5,6 +5,7 @@ const { transformFileSync } = require('@babel/core');
 const appData = require('../src/utils/appData');
 const finance = require('../src/utils/finance');
 const habits = require('../src/utils/habits');
+const todos = require('../src/utils/todos');
 const model = require('../src/services/cloudModel');
 
 const KEY = '@rho-tracker/data';
@@ -92,12 +93,13 @@ function storageHarness(stored = null) {
 	};
 }
 
-test('legacy finance migrates to complete v2 data without replaying money or assigning device habits', () => {
+test('legacy finance migrates to complete v3 data without replaying money or assigning device habits or tasks', () => {
 	const old = legacy();
 	const result = appData.validateAppData(old);
-	assert.equal(result.version, 2);
+	assert.equal(result.version, 3);
 	assert.deepEqual(result.wallet, old.wallet);
 	assert.deepEqual(result.habits, habits.createEmptyHabitData());
+	assert.deepEqual(result.todos, todos.createEmptyTodoData());
 	assert.deepEqual(old, legacy());
 	const snapshot = model.snapshot(
 		{
@@ -119,7 +121,7 @@ test('new and unsupported versions fail closed instead of silently discarding ha
 		{ ...legacy(), habits: habitData() },
 		{ ...legacy(), version: 2 },
 		{ ...combined(), habits: null },
-		{ ...combined(), version: 3 },
+		{ ...combined(), version: 4 },
 		{ ...combined(), habits: { version: 99, habits: [] } },
 	])
 		assert.throws(() => appData.validateAppData(value));
@@ -130,10 +132,13 @@ test('new and unsupported versions fail closed instead of silently discarding ha
 
 test('domain transformations preserve the other domain and never mutate their input', () => {
 	const original = combined();
+	original.todos.items.push({ id: 'task', title: 'Task', date: '2026-11-18', completedAt: null });
+	const before = structuredClone(original);
 	let next = appData.changeFinance(original, finance.updateMoneySources, [
 		{ id: 'bank', name: 'Renamed bank', amountMinor: 1200 },
 	]);
 	assert.deepEqual(next.habits, original.habits);
+	assert.deepEqual(next.todos, original.todos);
 	next = appData.changeHabits(
 		next,
 		habits.toggleHabitDate,
@@ -143,7 +148,64 @@ test('domain transformations preserve the other domain and never mutate their in
 	);
 	assert.deepEqual(next.habits.habits[0].completions, {});
 	assert.equal(next.wallet.sources[0].amountMinor, 1200);
-	assert.deepEqual(original, combined());
+	assert.deepEqual(next.todos, original.todos);
+	const previous = structuredClone(next);
+	next = appData.changeTodos(
+		next,
+		todos.toggleTodo,
+		'task',
+		new Date('2026-11-18T12:00:00.000Z'),
+	);
+	assert.deepEqual(next.wallet, previous.wallet);
+	assert.deepEqual(next.trackers, previous.trackers);
+	assert.deepEqual(next.habits, previous.habits);
+	assert.equal(next.todos.items[0].completedAt, '2026-11-18T12:00:00.000Z');
+	next.habits.habits[0].completions.changed = 'not shared';
+	assert.deepEqual(original, before);
+});
+
+test('v2 money and habits migrate to v3 with empty tasks while mislabeled task payloads fail closed', () => {
+	const old = { ...legacy(), version: 2, habits: habitData() };
+	const original = structuredClone(old);
+	assert.deepEqual(appData.validateAppData(old), combined());
+	assert.deepEqual(old, original);
+	for (const version of [1, 2]) {
+		const value = version === 1 ? legacy() : old;
+		for (const taskData of [
+			null,
+			todos.createEmptyTodoData(),
+			{ version: 1, items: [{ bad: true }] },
+		])
+			assert.throws(
+				() => appData.validateAppData({ ...value, todos: taskData }),
+				/version 3/,
+			);
+	}
+	for (const taskData of [
+		undefined,
+		null,
+		{ version: 2, items: [] },
+		{ version: 1, items: [null] },
+	])
+		assert.throws(() => appData.validateAppData({ ...combined(), todos: taskData }));
+});
+
+test('stored v1 and v2 aggregates load as v3 without writes, then persist only v3 on the same key', async () => {
+	for (const old of [legacy(), { ...legacy(), version: 2, habits: habitData() }]) {
+		const raw = JSON.stringify(old);
+		const h = storageHarness(raw);
+		const loaded = await h.api.loadAppData();
+		assert.deepEqual(plain(loaded), appData.validateAppData(old));
+		assert.equal(loaded.version, 3);
+		assert.deepEqual(plain(loaded.todos), todos.createEmptyTodoData());
+		assert.deepEqual(h.reads, [KEY]);
+		assert.equal(h.writes.length, 0);
+		assert.equal(h.values.get(KEY), raw);
+		await h.api.saveAppData(old);
+		assert.equal(h.writes.length, 1);
+		assert.equal(h.writes[0][0], KEY);
+		assert.deepEqual(JSON.parse(h.values.get(KEY)), appData.validateAppData(old));
+	}
 });
 
 test('device migration combines legacy money and habits in memory, then saves one authoritative record', async () => {
@@ -162,7 +224,14 @@ test('device migration combines legacy money and habits in memory, then saves on
 });
 
 test('malformed aggregate never falls back to legacy data or overwrites it', async () => {
-	for (const raw of ['{broken', 'null', '{}', JSON.stringify({ ...combined(), habits: null })]) {
+	for (const raw of [
+		'{broken',
+		'null',
+		'{}',
+		JSON.stringify({ ...combined(), habits: null }),
+		JSON.stringify({ ...combined(), todos: null }),
+		JSON.stringify({ ...combined(), version: 2 }),
+	]) {
 		const h = storageHarness(raw);
 		await assert.rejects(h.api.loadAppData());
 		assert.deepEqual(h.reads, [KEY]);
@@ -179,6 +248,7 @@ test('validation and storage failures cannot partially save the complete dataset
 	const raw = JSON.stringify(combined());
 	const h = storageHarness(raw);
 	await assert.rejects(h.api.saveAppData({ ...combined(), habits: null }));
+	await assert.rejects(h.api.saveAppData({ ...combined(), todos: null }));
 	assert.equal(h.writes.length, 0);
 	h.native.setItem = async (key, value) => {
 		assert.equal(key, KEY);

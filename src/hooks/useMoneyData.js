@@ -87,11 +87,15 @@ export function useMoneyData({ pauseSync = false } = {}) {
 		saveHabit: session.saveHabit,
 		removeHabit: session.removeHabit,
 		toggleDate: session.toggleDate,
+		saveTodo: session.saveTodo,
+		deleteTodo: session.deleteTodo,
+		toggleTodo: session.toggleTodo,
 		signIn: session.signIn,
 		signOut: session.signOut,
 		sync,
 		importGuest: session.importGuest,
 		importGuestHabits: session.importGuestHabits,
+		importGuestTodos: session.importGuestTodos,
 		resolveConflict: session.resolveConflict,
 	};
 }

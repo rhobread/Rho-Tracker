@@ -80,6 +80,7 @@ function screen(modulePath, modules) {
 			if (name === '../utils/money') return require('../src/utils/money');
 			if (name === '../utils/trackers') return require('../src/utils/trackers');
 			if (name === '../utils/habits') return require('../src/utils/habits');
+			if (name === '../utils/todos') return require('../src/utils/todos');
 			throw new Error(`Unexpected import: ${name}`);
 		},
 	});
@@ -333,6 +334,7 @@ test('Rho Tracker opens Money and Habits using one shared account session', () =
 		},
 		'./BalanceScreen': { BalanceScreen: 'BalanceScreen' },
 		'./HabitScreen': { HabitScreen: 'HabitScreen' },
+		'./TodoScreen': { TodoScreen: 'TodoScreen' },
 		'./AccountScreen': { AccountScreen: 'AccountScreen' },
 		'../../assets/icon.png': 'bread-icon',
 	});
@@ -351,6 +353,15 @@ test('Rho Tracker opens Money and Habits using one shared account session', () =
 	tree = render();
 	assert.equal(tree.type, 'HabitScreen');
 	assert.equal(tree.props.habits, habits);
+	tree.props.onBack();
+	assert.match(text(render()), /Rho Tracker/);
+	nodes(render())
+		.find((node) => node.props.accessibilityLabel === 'Open To-Do List')
+		.props.onPress();
+	tree = render();
+	assert.equal(tree.type, 'TodoScreen');
+	assert.equal(tree.props.session, money);
+	assert.equal(typeof tree.props.onEditingChange, 'function');
 	tree.props.onBack();
 	assert.match(text(render()), /Rho Tracker/);
 });
@@ -381,6 +392,7 @@ test('home and habit navigation expose account status and route habit conflicts 
 		'../hooks/useHabits': { useHabits: () => ({}) },
 		'./BalanceScreen': { BalanceScreen: 'BalanceScreen' },
 		'./HabitScreen': { HabitScreen: 'HabitScreen' },
+		'./TodoScreen': { TodoScreen: 'TodoScreen' },
 		'./AccountScreen': { AccountScreen: 'AccountScreen' },
 		'../../assets/icon.png': 'bread-icon',
 	});
@@ -398,6 +410,11 @@ test('home and habit navigation expose account status and route habit conflicts 
 	money.conflict = { heads: [] };
 	assert.equal(render().type, 'AccountScreen');
 	assert.equal(render().props.session, money);
+	render().props.onHome();
+	nodes(render())
+		.find((node) => node.props.accessibilityLabel === 'Open To-Do List')
+		.props.onPress();
+	assert.equal(render().type, 'AccountScreen');
 });
 
 function habitScreen(overrides = {}) {
@@ -676,6 +693,7 @@ function accountScreen(overrides = {}, onHome) {
 		conflict: null,
 		canImportGuest: false,
 		canImportHabits: false,
+		canImportTodos: false,
 		googleAvailability: { available: true, reason: null },
 		signIn: async () => {
 			calls.push(['signIn']);
@@ -691,6 +709,10 @@ function accountScreen(overrides = {}, onHome) {
 		},
 		importGuestHabits: async () => {
 			calls.push(['importGuestHabits']);
+			return true;
+		},
+		importGuestTodos: async () => {
+			calls.push(['importGuestTodos']);
 			return true;
 		},
 		signOut: async () => {
@@ -730,6 +752,275 @@ function accountScreen(overrides = {}, onHome) {
 	};
 }
 
+function todoScreen(overrides = {}) {
+	const { todayDate } = require('../src/utils/trackers');
+	const { shiftDate } = require('../src/utils/habits');
+	const today = todayDate();
+	const calls = [];
+	let confirmation;
+	const session = {
+		data: {
+			todos: {
+				version: 1,
+				items: [
+					{ id: 'today', title: 'Buy groceries', date: today, completedAt: null },
+					{
+						id: 'later',
+						title: 'Call the dentist',
+						date: shiftDate(today, 1),
+						completedAt: null,
+					},
+					{
+						id: 'old',
+						title: 'Return the book',
+						date: shiftDate(today, -1),
+						completedAt: null,
+					},
+				],
+			},
+		},
+		loading: false,
+		saving: false,
+		loadError: null,
+		account: null,
+		conflict: null,
+		saveTodo: async (task) => {
+			calls.push(['save', task]);
+			return true;
+		},
+		toggleTodo: async (id) => {
+			calls.push(['toggle', id]);
+			return true;
+		},
+		deleteTodo: async (id) => {
+			calls.push(['delete', id]);
+			return true;
+		},
+		reload: async () => {
+			calls.push(['reload']);
+			return true;
+		},
+		...overrides,
+	};
+	const render = screen('../src/screens/TodoScreen.js', {
+		'../components/DatePicker': { DatePicker: 'DatePicker' },
+		'../components/TodoEditor': { TodoEditor: 'TodoEditor' },
+		'react-native': {
+			Alert: {
+				alert: (...args) => {
+					confirmation = args;
+				},
+			},
+		},
+	});
+	return {
+		session,
+		today,
+		calls,
+		confirmation: () => confirmation,
+		render: (props = {}) => render({ session, onBack() {}, onAccount() {}, ...props }),
+	};
+}
+
+test('dated to-dos filter by selected date and all-tasks view retains overdue and future tasks', async () => {
+	const ui = todoScreen();
+	let tree = ui.render();
+	assert.match(text(tree), /Buy groceries/);
+	assert.doesNotMatch(text(tree), /Call the dentist|Return the book/);
+	assert.match(text(tree), /0\s+of\s+1\s+completed/);
+	assert.match(text(tree), /Device only/);
+	await nodes(tree)
+		.find((node) => node.props.accessibilityLabel === 'Complete Buy groceries')
+		.props.onPress();
+	assert.deepEqual(ui.calls, [['toggle', 'today']]);
+	nodes(tree)
+		.find((node) => node.type === 'DatePicker')
+		.props.onChange(ui.session.data.todos.items[1].date);
+	tree = ui.render();
+	assert.match(text(tree), /Call the dentist/);
+	assert.doesNotMatch(text(tree), /Buy groceries/);
+	nodes(tree)
+		.find((node) => node.type === 'Pressable' && text(node) === 'Back to today')
+		.props.onPress();
+	assert.match(text(ui.render()), /Buy groceries/);
+	nodes(ui.render())
+		.find((node) => node.props.accessibilityRole === 'tab' && text(node) === 'All tasks')
+		.props.onPress();
+	tree = ui.render();
+	assert.match(text(tree), /Buy groceries/);
+	assert.match(text(tree), /Call the dentist/);
+	assert.match(text(tree), /Return the book/);
+	assert.match(text(tree), /Overdue/);
+	assert.match(text(tree), /0\s+of\s+3\s+completed/);
+});
+
+test('to-do completion is reversible and persisted failures keep the displayed task unchanged', async () => {
+	const ui = todoScreen({
+		toggleTodo: async () => {
+			throw new Error('private storage path');
+		},
+	});
+	await nodes(ui.render())
+		.find((node) => node.props.accessibilityRole === 'checkbox')
+		.props.onPress();
+	assert.match(text(ui.render()), /Could not save the task/);
+	assert.doesNotMatch(text(ui.render()), /private storage path/);
+	assert.equal(
+		nodes(ui.render()).find((node) => node.props.accessibilityRole === 'checkbox').props
+			.accessibilityState.checked,
+		false,
+	);
+	ui.session.data.todos.items[0].completedAt = '2026-11-18T01:00:00.000Z';
+	const checkbox = nodes(ui.render()).find((node) => node.props.accessibilityRole === 'checkbox');
+	assert.equal(checkbox.props.accessibilityState.checked, true);
+	assert.match(text(ui.render()), /1\s+of\s+1\s+completed/);
+	ui.session.toggleTodo = async (id) => {
+		ui.calls.push(['undo', id]);
+		return true;
+	};
+	await nodes(ui.render())
+		.find((node) => node.props.accessibilityRole === 'checkbox')
+		.props.onPress();
+	assert.deepEqual(ui.calls, [['undo', 'today']]);
+});
+
+test('adding and editing tasks preserve selected dates and pause downloads until the editor closes', async () => {
+	const ui = todoScreen();
+	let paused;
+	const props = {
+		onEditingChange: (value) => {
+			paused = value;
+		},
+	};
+	nodes(ui.render(props))
+		.find((node) => node.type === 'DatePicker')
+		.props.onChange('2028-02-29');
+	nodes(ui.render(props))
+		.find((node) => node.type === 'Pressable' && text(node) === 'Add task')
+		.props.onPress();
+	let editor = nodes(ui.render(props)).find((node) => node.type === 'TodoEditor');
+	assert.equal(paused, true);
+	assert.equal(editor.props.initialDate, '2028-02-29');
+	assert.equal(editor.props.todo, null);
+	const task = { id: 'new', title: 'Leap day task', date: '2028-02-29', completedAt: null };
+	assert.equal(await editor.props.onSave(task), true);
+	assert.deepEqual(ui.calls, [['save', task]]);
+	editor.props.onClose();
+	ui.render(props);
+	assert.equal(paused, false);
+	nodes(ui.render(props))
+		.find((node) => node.type === 'DatePicker')
+		.props.onChange(ui.today);
+	nodes(ui.render(props))
+		.find((node) => node.props.accessibilityLabel === 'Edit Buy groceries')
+		.props.onPress();
+	editor = nodes(ui.render(props)).find((node) => node.type === 'TodoEditor');
+	assert.equal(editor.props.todo, ui.session.data.todos.items[0]);
+	assert.equal(paused, true);
+});
+
+test('task deletion needs confirmation and keeps sync paused until cancel or delete', async () => {
+	const ui = todoScreen();
+	let paused;
+	const props = {
+		onEditingChange: (value) => {
+			paused = value;
+		},
+	};
+	nodes(ui.render(props))
+		.find((node) => node.props.accessibilityLabel === 'Delete Buy groceries')
+		.props.onPress();
+	ui.render(props);
+	assert.equal(paused, true);
+	assert.match(ui.confirmation()[1], /Buy groceries/);
+	assert.equal(ui.calls.length, 0);
+	ui.confirmation()[2]
+		.find((button) => button.text === 'Cancel')
+		.onPress();
+	ui.render(props);
+	assert.equal(paused, false);
+	nodes(ui.render(props))
+		.find((node) => node.props.accessibilityLabel === 'Delete Buy groceries')
+		.props.onPress();
+	await ui
+		.confirmation()[2]
+		.find((button) => button.text === 'Delete')
+		.onPress();
+	assert.deepEqual(ui.calls, [['delete', 'today']]);
+	ui.render(props);
+	assert.equal(paused, false);
+});
+
+test('loading, failed, conflicted and saving task states never expose writable stale data', () => {
+	for (const overrides of [
+		{ loading: true },
+		{ loadError: 'Could not load account data.' },
+		{ conflict: { heads: [] } },
+	]) {
+		const ui = todoScreen(overrides);
+		assert.doesNotMatch(text(ui.render()), /Add task|Buy groceries/);
+	}
+	const ui = todoScreen({ saving: true });
+	assert.equal(
+		nodes(ui.render()).find((node) => node.props.accessibilityRole === 'checkbox').props
+			.disabled,
+		true,
+	);
+	assert.equal(
+		nodes(ui.render()).find((node) => node.type === 'Pressable' && text(node) === 'Add task')
+			.props.disabled,
+		true,
+	);
+});
+
+test('task editor validates names and saves the date chosen from the calendar', async () => {
+	let saved;
+	const render = screen('../src/components/TodoEditor.js', {
+		'expo-crypto': { randomUUID: () => 'new-task' },
+		'./DatePicker': { DatePicker: 'DatePicker' },
+		'./TrackerForm': { TrackerForm: 'TrackerForm', TrackerField: 'TrackerField' },
+	});
+	const props = {
+		initialDate: '2026-12-01',
+		saving: false,
+		onClose() {},
+		onSave: async (value) => {
+			saved = value;
+			return true;
+		},
+	};
+	await assert.rejects(render(props).props.onSave(), /Title/);
+	nodes(render(props))
+		.find((node) => node.type === 'TrackerField')
+		.props.onChangeText('  Renew passport  ');
+	nodes(render(props))
+		.find((node) => node.type === 'DatePicker')
+		.props.onChange('2028-02-29');
+	assert.equal(await render(props).props.onSave(), true);
+	assert.deepEqual(JSON.parse(JSON.stringify(saved)), {
+		id: 'new-task',
+		title: 'Renew passport',
+		date: '2028-02-29',
+		completedAt: null,
+	});
+	await assert.rejects(
+		render({ ...props, onSave: async () => false }).props.onSave(),
+		/Could not save this task/,
+	);
+});
+
+test('existing accounts can explicitly copy only device tasks', async () => {
+	const ui = accountScreen({ canImportTodos: true });
+	nodes(ui.current())
+		.find((node) => node.type === 'Pressable' && text(node) === 'Copy device-only tasks')
+		.props.onPress();
+	assert.match(ui.message(), /a@example\.test/);
+	assert.match(ui.message(), /balances, payments, and habits will not change/);
+	assert.equal(ui.calls.length, 0);
+	await ui.confirm('Copy tasks');
+	assert.deepEqual(ui.calls, [['importGuestTodos']]);
+});
+
 test('account controls connect Google, sync manually, and confirm device data import', async () => {
 	const ui = accountScreen({ canImportGuest: true });
 	const tree = ui.current();
@@ -755,7 +1046,7 @@ test('account controls connect Google, sync manually, and confirm device data im
 test('existing money accounts can confirm habit-only import without replacing money', async () => {
 	const ui = accountScreen({ canImportHabits: true, canImportGuest: false });
 	const tree = ui.current();
-	assert.match(text(tree), /Money and Habits/);
+	assert.match(text(tree), /Money, Habits, and To-Dos/);
 	nodes(tree)
 		.find((node) => node.type === 'Pressable' && text(node) === 'Copy device-only habits')
 		.props.onPress();
