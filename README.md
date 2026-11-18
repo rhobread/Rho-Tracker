@@ -214,6 +214,57 @@ Open **Google Drive**, sign in, and grant private app-data access. For a new acc
 
 OAuth IDs are compiled into JavaScript at build time. Restart Metro after local `.env` changes, and rebuild a standalone APK for those changes to take effect. Live sign-in has not been verified in this repository environment because no real OAuth credentials or device were supplied.
 
+## Rebuild And Replace The APK
+
+Use this workflow whenever you want the latest code in **`builds/MoneyTracker.apk`**. EAS builds the APK on its servers; downloading it afterward updates the local file. Pushing to GitHub, running tests, or running `expo export` does **not** rebuild or replace this APK.
+
+Run the following commands from the Rho Tracker project directory.
+
+### 1. Update The Version
+
+In your local `app.json`:
+
+- Increase `expo.android.versionCode` by **1** for every new APK. If it is missing, add an integer greater than the version code of your last installed/built APK. The last successful build can be checked with `npx eas-cli@latest build:list --platform android`.
+- Update `expo.version` when changing the release version, for example `1.1.0` to `1.1.1`.
+- Keep `expo.android.package` as `com.moneytracker.app` and reuse the existing EAS signing key. Do not generate a new signing key for a normal update.
+
+The project uses local version settings (`cli.appVersionSource: "local"` in `eas.json`), and the preview profile does not currently enable automatic version-code increments. `package.json`'s version and the application's data-schema version are not the APK release/build numbers. Both `app.json` and `eas.json` are gitignored, so keep backups of these local settings.
+
+### 2. Build The Standalone APK
+
+```powershell
+npx eas-cli@latest build --platform android --profile preview
+```
+
+Wait for a **successful** build. The preview profile must retain `android.buildType: "apk"`. Use the new build's **APK download URL**, not its logs/build-details page. Keep the existing local APK if the build fails.
+
+To find recent builds and their APK download links:
+
+```powershell
+npx eas-cli@latest build:list --platform android
+```
+
+### 3. Download And Replace The Local File
+
+Replace the URL placeholder below with the new successful build's APK download URL, then run this PowerShell block. It creates `builds/` if needed and downloads to a temporary filename first. If the download fails, execution stops before replacing the old APK.
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    if (-not (Test-Path -LiteralPath '.\builds' -PathType Container)) {
+        New-Item -ItemType Directory -Path '.\builds' | Out-Null
+    }
+    Invoke-WebRequest -Uri 'PASTE_NEW_APK_DOWNLOAD_URL_HERE' -OutFile '.\builds\MoneyTracker.new.apk'
+    Move-Item -LiteralPath '.\builds\MoneyTracker.new.apk' -Destination '.\builds\MoneyTracker.apk' -Force
+}
+```
+
+This replaces only **`builds/MoneyTracker.apk`** on your computer. Install that APK over the existing app on your phone to update it. **Do not uninstall first**, because uninstalling can erase device-only or unsynced data. Android updates require the same package name, matching signing certificate, and a compatible version code. Update every device sharing the account when the synced data format changes.
+
+When asking an assistant to handle this workflow, use:
+
+> Build the latest APK and replace `builds/MoneyTracker.apk`. Increment the Android version code, reuse the existing signing key, and keep the old APK until the new build downloads successfully.
+
 ## Run In An Emulator
 
 ### Android
